@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 
@@ -15,6 +16,7 @@ namespace ThesisBackupper.ViewModels
         public MainViewModel()
         {
             this.DisplayName = Properties.Resources.AppName;
+            this.CurrentProgressPerc = 0;
             this.LocalFilesLocation = @"C:\Users\Vittorio\Desktop\Blogracy\tesi";
             this.DropBoxFilesLocation = @"C:\Users\Vittorio\Dropbox\Tesi";
             this.DropBoxExeLocation = @"C:\Users\Vittorio\AppData\Roaming\Dropbox\bin\Dropbox.exe";
@@ -67,6 +69,21 @@ namespace ThesisBackupper.ViewModels
         }
 
 
+
+
+        private int currentProgressPerc;
+
+        public int CurrentProgressPerc
+        {
+            get { return currentProgressPerc; }
+            set
+            {
+                currentProgressPerc = value;
+                NotifyOfPropertyChange(() => CurrentProgressPerc);
+            }
+        }
+
+
         public void OpenDropboxApplication()
         {
             ProcessStartInfo startInfo = new ProcessStartInfo();
@@ -82,21 +99,48 @@ namespace ThesisBackupper.ViewModels
             }
         }
 
-        public void StartBackup()
+        public async void StartBackup()
         {
             try
             {
                 OpenDropboxApplication();
 
-                CopyStructure(this.LocalFilesLocation, this.DropBoxFilesLocation);
+                await Task.Run(() =>
+                 {
+                     int total = CountFiles(this.LocalFilesLocation, this.DropBoxFilesLocation);
+                     int files = 0;
+                     CopyStructure(this.LocalFilesLocation, this.DropBoxFilesLocation, () =>
+                     {
+                         this.CurrentProgressPerc = (++files / total);
+                     });
+                 });
 
                 MessageBox.Show(Properties.Resources.lblBackupOK, Properties.Resources.lblInformation, MessageBoxButton.OK, MessageBoxImage.Information);
+                this.CurrentProgressPerc = 0;
             }
             catch (Exception ex)
             {
 
                 MessageBox.Show(ex.Message, Properties.Resources.lblError, MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        private int CountFiles(string sourceDir, string targetDir)
+        {
+            Directory.CreateDirectory(targetDir);
+            int count = 0;
+            foreach (var file in Directory.GetFiles(sourceDir))
+            {
+                if (!File.Exists(Path.Combine(targetDir, Path.GetFileName(file))))
+                    ++count;
+                else if (File.GetLastWriteTime(file).CompareTo(File.GetLastWriteTime(Path.Combine(targetDir, Path.GetFileName(file)))) > 0)
+                    ++count;
+            }
+
+            foreach (var directory in Directory.GetDirectories(sourceDir))
+                count += CountFiles(directory, Path.Combine(targetDir, Path.GetFileName(directory)));
+
+            return count;
         }
 
         public bool CanStartBackup
@@ -117,15 +161,29 @@ namespace ThesisBackupper.ViewModels
         }
 
 
-        void CopyStructure(string sourceDir, string targetDir)
+        void CopyStructure(string sourceDir, string targetDir, System.Action notifyCopy)
         {
             Directory.CreateDirectory(targetDir);
 
             foreach (var file in Directory.GetFiles(sourceDir))
-                File.Copy(file, Path.Combine(targetDir, Path.GetFileName(file)), true);
+            {
+                if (!File.Exists(Path.Combine(targetDir, Path.GetFileName(file))))
+                {
+                    File.Copy(file, Path.Combine(targetDir, Path.GetFileName(file)), true);
+                    if (notifyCopy != null)
+                        notifyCopy.Invoke();
+                }
+                else if (File.GetLastWriteTime(file).CompareTo(File.GetLastWriteTime(Path.Combine(targetDir, Path.GetFileName(file)))) > 0)
+                {
+                    File.Copy(file, Path.Combine(targetDir, Path.GetFileName(file)), true);
+                    if (notifyCopy != null)
+                        notifyCopy.Invoke();
+                }
+
+            }
 
             foreach (var directory in Directory.GetDirectories(sourceDir))
-                CopyStructure(directory, Path.Combine(targetDir, Path.GetFileName(directory)));
+                CopyStructure(directory, Path.Combine(targetDir, Path.GetFileName(directory)), notifyCopy);
         }
     }
 }
